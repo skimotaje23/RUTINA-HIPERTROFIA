@@ -78,6 +78,60 @@ body {
   font-size: 12.5px;
   color: var(--gray);
 }
+.topbar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.topbar-icons {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+.icon-btn-lg {
+  width: 38px; height: 38px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--border);
+  display:flex; align-items:center; justify-content:center;
+  color: var(--yellow); font-size: 16px; cursor:pointer;
+}
+.icon-btn-lg:active { background: var(--card-2); }
+.icon-btn-lg.active-view { background: var(--yellow); color: #1a1400; border-color: var(--yellow); }
+
+.weight-view { padding: 8px 16px 20px; }
+.current-weight-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px 16px; text-align: center; margin-bottom: 16px;
+}
+.current-weight-card .cw-value {
+  font-family: var(--font-display); font-size: 34px; color: var(--yellow); line-height: 1;
+}
+.current-weight-card .cw-date { font-size: 11.5px; color: var(--gray-dim); margin-top: 6px; }
+.current-weight-card .cw-delta { font-size: 12.5px; margin-top: 8px; }
+.cw-delta.down { color: #7fd88f; }
+.cw-delta.up { color: var(--yellow); }
+.cw-delta.same { color: var(--gray); }
+
+.sparkline-wrap {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 12px 8px; margin-bottom: 16px;
+}
+.sparkline-wrap .label {
+  color: var(--gray-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px;
+}
+
+.weight-list-title {
+  font-family: var(--font-display); color: var(--gray); font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.4px; margin: 4px 0 8px;
+}
+.weight-row {
+  display:flex; justify-content:space-between; align-items:center;
+  background: var(--card); border:1px solid var(--border); border-radius: 12px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.weight-row .wr-weight { font-family: var(--font-display); color: var(--white); font-size: 14px; }
+.weight-row .wr-date { color: var(--gray-dim); font-size: 11px; margin-top: 2px; }
 
 .tabs {
   display: flex;
@@ -363,16 +417,25 @@ body {
 <body>
 <div id="app">
   <div class="topbar">
-    <h1>HIPERTROFIA PPL</h1>
-    <p>Registra tus series y deja que la app calcule tu progresión</p>
+    <div class="topbar-row">
+      <div>
+        <h1>HIPERTROFIA PPL</h1>
+        <p id="topbarSub">Registra tus series y deja que la app calcule tu progresión</p>
+      </div>
+      <div class="topbar-icons">
+        <div class="icon-btn-lg" id="viewToggleBtn" title="Peso corporal">⚖</div>
+        <div class="icon-btn-lg" id="exportBtn" title="Exportar datos">⬇</div>
+      </div>
+    </div>
   </div>
   <div class="tabs" id="tabs"></div>
   <div class="day-header" id="dayHeader"></div>
   <div class="exercise-list" id="exerciseList"></div>
+  <div class="weight-view" id="weightView" style="display:none;"></div>
 </div>
 
 <div class="fab">
-  <div class="fab-inner" id="addExerciseBtn">+ &nbsp; Añadir ejercicio a este día</div>
+  <div class="fab-inner" id="fabBtn">+ &nbsp; Añadir ejercicio a este día</div>
 </div>
 
 <div id="modalRoot"></div>
@@ -386,10 +449,13 @@ const DEFAULT_ROUTINE = [{"id": "d1", "name": "Día 1", "subtitle": "Empuje", "o
 
 let routine = null;
 let logs = {}; // { exerciseId: [ {date, sets:[{weight,reps,rir}]} ] }
+let bodyweight = []; // [ {date, weight} ] sorted ascending by date
 let activeDayId = 'd1';
+let activeView = 'routine'; // 'routine' | 'weight'
 
 const STORAGE_ROUTINE_KEY = 'ppl-routine-v1';
 const STORAGE_LOGS_KEY = 'ppl-logs-v1';
+const STORAGE_BW_KEY = 'ppl-bodyweight-v1';
 
 function uid(prefix) {
   return prefix + '_' + Math.random().toString(36).slice(2, 9);
@@ -408,6 +474,12 @@ async function loadData() {
   } catch (e) {
     logs = {};
   }
+  try {
+    const b = await storageGet(STORAGE_BW_KEY);
+    bodyweight = b ? JSON.parse(b) : [];
+  } catch (e) {
+    bodyweight = [];
+  }
   if (!routine || !routine.length) routine = JSON.parse(JSON.stringify(DEFAULT_ROUTINE));
 }
 
@@ -417,6 +489,10 @@ async function saveRoutine() {
 
 async function saveLogs() {
   return await storageSet(STORAGE_LOGS_KEY, JSON.stringify(logs));
+}
+
+async function saveBodyweight() {
+  return await storageSet(STORAGE_BW_KEY, JSON.stringify(bodyweight));
 }
 
 async function storageGet(key) {
@@ -498,9 +574,41 @@ function suggestNext(ex, session) {
 }
 
 function render() {
-  renderTabs();
-  renderDayHeader();
-  renderExercises();
+  const tabsEl = document.getElementById('tabs');
+  const dayHeaderEl = document.getElementById('dayHeader');
+  const exListEl = document.getElementById('exerciseList');
+  const weightEl = document.getElementById('weightView');
+  const fabBtn = document.getElementById('fabBtn');
+  const viewToggleBtn = document.getElementById('viewToggleBtn');
+  const topbarSub = document.getElementById('topbarSub');
+
+  if (activeView === 'routine') {
+    tabsEl.style.display = '';
+    dayHeaderEl.style.display = '';
+    exListEl.style.display = '';
+    weightEl.style.display = 'none';
+    viewToggleBtn.classList.remove('active-view');
+    viewToggleBtn.textContent = '⚖';
+    viewToggleBtn.title = 'Peso corporal';
+    topbarSub.textContent = 'Registra tus series y deja que la app calcule tu progresión';
+    fabBtn.textContent = '+ \u00a0 Añadir ejercicio a este día';
+    fabBtn.onclick = () => openAddExerciseSheet(getDay(activeDayId));
+    renderTabs();
+    renderDayHeader();
+    renderExercises();
+  } else {
+    tabsEl.style.display = 'none';
+    dayHeaderEl.style.display = 'none';
+    exListEl.style.display = 'none';
+    weightEl.style.display = '';
+    viewToggleBtn.classList.add('active-view');
+    viewToggleBtn.textContent = '🏋';
+    viewToggleBtn.title = 'Volver a la rutina';
+    topbarSub.textContent = 'Historial de tu peso corporal';
+    fabBtn.textContent = '+ \u00a0 Registrar peso de hoy';
+    fabBtn.onclick = () => openWeightLogSheet();
+    renderWeightView();
+  }
 }
 
 function renderTabs() {
@@ -631,6 +739,8 @@ function renderHistorySheet(ex) {
     };
   });
 }
+
+function openLogSheet(ex) {
   const setCount = ex.sets;
   let setsHtml = '';
   for (let i = 0; i < setCount; i++) {
@@ -828,9 +938,168 @@ function showToast(msg, isError) {
   setTimeout(() => t.remove(), 2200);
 }
 
-document.getElementById('addExerciseBtn').onclick = () => {
-  openAddExerciseSheet(getDay(activeDayId));
+// ---------- Body weight ----------
+
+function sortBodyweight() {
+  bodyweight.sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+
+function renderWeightView() {
+  const el = document.getElementById('weightView');
+  sortBodyweight();
+
+  if (!bodyweight.length) {
+    el.innerHTML = '<div class="empty-state">Todavía no has registrado tu peso.<br>Usa el botón de abajo para añadir el primero.</div>';
+    return;
+  }
+
+  const last = bodyweight[bodyweight.length - 1];
+  const prev = bodyweight.length > 1 ? bodyweight[bodyweight.length - 2] : null;
+  let deltaHtml = '';
+  if (prev) {
+    const diff = Math.round((last.weight - prev.weight) * 10) / 10;
+    const cls = diff > 0 ? 'up' : diff < 0 ? 'down' : 'same';
+    const sign = diff > 0 ? '+' : '';
+    deltaHtml = `<div class="cw-delta ${cls}">${sign}${diff}kg desde el registro anterior</div>`;
+  }
+
+  const sparkline = buildSparkline(bodyweight.slice(-20));
+
+  const listHtml = bodyweight.slice().reverse().map((entry) => {
+    const realIdx = bodyweight.findIndex(e => e.date === entry.date);
+    return `
+      <div class="weight-row">
+        <div>
+          <div class="wr-weight">${entry.weight}kg</div>
+          <div class="wr-date">${fmtDate(entry.date)}</div>
+        </div>
+        <div class="rm" data-del-w="${realIdx}">–</div>
+      </div>
+    `;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="current-weight-card">
+      <div class="cw-value">${last.weight}kg</div>
+      <div class="cw-date">${fmtDate(last.date)}</div>
+      ${deltaHtml}
+    </div>
+    <div class="sparkline-wrap">
+      <div class="label">Evolución (últimos ${Math.min(bodyweight.length, 20)} registros)</div>
+      ${sparkline}
+    </div>
+    <div class="weight-list-title">Historial completo</div>
+    ${listHtml}
+  `;
+
+  el.querySelectorAll('[data-del-w]').forEach(btn => {
+    btn.onclick = async () => {
+      const idx = parseInt(btn.getAttribute('data-del-w'), 10);
+      bodyweight.splice(idx, 1);
+      await saveBodyweight();
+      render();
+      showToast('Registro eliminado');
+    };
+  });
+}
+
+function buildSparkline(entries) {
+  if (entries.length < 2) {
+    return `<div style="color:var(--gray-dim); font-size:12px; padding: 10px 0;">Registra al menos 2 pesajes para ver la gráfica.</div>`;
+  }
+  const w = 300, h = 70, pad = 8;
+  const weights = entries.map(e => e.weight);
+  const min = Math.min(...weights);
+  const max = Math.max(...weights);
+  const range = (max - min) || 1;
+  const stepX = (w - pad * 2) / (entries.length - 1);
+  const points = entries.map((e, i) => {
+    const x = pad + i * stepX;
+    const y = pad + (1 - (e.weight - min) / range) * (h - pad * 2);
+    return [x, y];
+  });
+  const pathD = points.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const lastPoint = points[points.length - 1];
+  return `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:${h}px; display:block;">
+      <path d="${pathD}" fill="none" stroke="#f7c600" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="${lastPoint[0].toFixed(1)}" cy="${lastPoint[1].toFixed(1)}" r="4" fill="#f7c600"/>
+    </svg>
+  `;
+}
+
+function openWeightLogSheet() {
+  const today = new Date().toISOString().slice(0, 10);
+  openOverlay(`
+    <div class="header-close"><div class="close-x" id="closeBtn">✕</div></div>
+    <h3>Registrar peso</h3>
+    <div class="sheet-sub">Se guarda un registro por día — si ya existe uno para la fecha elegida, lo actualiza</div>
+    <div class="field">
+      <label>Fecha</label>
+      <input id="w-date" type="date" value="${today}">
+    </div>
+    <div class="field">
+      <label>Peso (kg)</label>
+      <input id="w-weight" type="number" inputmode="decimal" step="0.1" placeholder="Ej. 78.5">
+    </div>
+    <div class="sheet-actions">
+      <button class="btn-secondary" id="cancelW">Cancelar</button>
+      <button class="btn-primary" id="saveW">Guardar</button>
+    </div>
+  `);
+  document.getElementById('closeBtn').onclick = closeModal;
+  document.getElementById('cancelW').onclick = closeModal;
+  document.getElementById('saveW').onclick = async () => {
+    const date = document.getElementById('w-date').value;
+    const weight = parseFloat(document.getElementById('w-weight').value);
+    if (!date || isNaN(weight)) {
+      alert('Introduce fecha y peso válidos.');
+      return;
+    }
+    const isoDate = new Date(date + 'T12:00:00').toISOString();
+    const dayKey = date;
+    const existingIdx = bodyweight.findIndex(e => e.date.slice(0, 10) === dayKey);
+    if (existingIdx >= 0) {
+      bodyweight[existingIdx] = { date: isoDate, weight };
+    } else {
+      bodyweight.push({ date: isoDate, weight });
+    }
+    await saveBodyweight();
+    closeModal();
+    render();
+    showToast('Peso guardado');
+  };
+}
+
+// ---------- Export ----------
+
+function exportData() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: 'Hipertrofia PPL',
+    routine,
+    logs,
+    bodyweight,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `hipertrofia_ppl_datos_${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  showToast('Archivo descargado');
+}
+
+document.getElementById('viewToggleBtn').onclick = () => {
+  activeView = activeView === 'routine' ? 'weight' : 'routine';
+  render();
 };
+
+document.getElementById('exportBtn').onclick = exportData;
 
 (async function init() {
   await loadData();

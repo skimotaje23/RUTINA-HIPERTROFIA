@@ -100,6 +100,15 @@ body {
 .icon-btn-lg.active-view { background: var(--yellow); color: #1a1400; border-color: var(--yellow); }
 
 .weight-view { padding: 8px 16px 20px; }
+.back-link {
+  font-family: var(--font-display);
+  color: var(--yellow);
+  font-size: 13px;
+  margin-bottom: 14px;
+  cursor: pointer;
+  display: inline-block;
+}
+.back-link:active { opacity: 0.7; }
 .current-weight-card {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 18px 16px; text-align: center; margin-bottom: 16px;
@@ -685,23 +694,50 @@ function renderExercises() {
 
 // ---------- Modals ----------
 
+let modalOpen = false;
+
 function closeModal() {
-  document.getElementById('modalRoot').innerHTML = '';
+  if (modalOpen) {
+    history.back();
+  } else {
+    document.getElementById('modalRoot').innerHTML = '';
+  }
 }
 
 function openOverlay(innerHtml) {
   const root = document.getElementById('modalRoot');
   root.innerHTML = `<div class="overlay" id="overlayBg"><div class="sheet">${innerHtml}</div></div>`;
+  modalOpen = true;
+  history.pushState({ pplModal: true }, '');
   document.getElementById('overlayBg').addEventListener('click', (e) => {
     if (e.target.id === 'overlayBg') closeModal();
   });
 }
 
-function openHistorySheet(ex) {
-  renderHistorySheet(ex);
+window.addEventListener('popstate', () => {
+  if (modalOpen) {
+    modalOpen = false;
+    document.getElementById('modalRoot').innerHTML = '';
+    return;
+  }
+  if (activeView === 'weight') {
+    activeView = 'routine';
+    render();
+  }
+});
+
+function goBackToRoutine() {
+  if (activeView === 'weight') {
+    history.back();
+  }
 }
 
-function renderHistorySheet(ex) {
+function openHistorySheet(ex) {
+  openOverlay(historySheetHtml(ex));
+  wireHistorySheet(ex);
+}
+
+function historySheetHtml(ex) {
   const sessions = (logs[ex.id] || []).slice().reverse();
   const rowsHtml = sessions.map((session, revIdx) => {
     const realIdx = logs[ex.id].length - 1 - revIdx;
@@ -717,7 +753,7 @@ function renderHistorySheet(ex) {
     `;
   }).join('');
 
-  openOverlay(`
+  return `
     <div class="header-close"><div class="close-x" id="closeBtn">✕</div></div>
     <h3>${ex.name}</h3>
     <div class="sheet-sub">${sessions.length} sesión${sessions.length === 1 ? '' : 'es'} registrada${sessions.length === 1 ? '' : 's'}</div>
@@ -725,7 +761,10 @@ function renderHistorySheet(ex) {
     <div class="sheet-actions">
       <button class="btn-secondary" id="closeHist">Cerrar</button>
     </div>
-  `);
+  `;
+}
+
+function wireHistorySheet(ex) {
   document.getElementById('closeBtn').onclick = closeModal;
   document.getElementById('closeHist').onclick = closeModal;
   document.querySelectorAll('#histContainer .rm').forEach(btn => {
@@ -734,7 +773,12 @@ function renderHistorySheet(ex) {
       logs[ex.id].splice(idx, 1);
       await saveLogs();
       render();
-      renderHistorySheet(ex);
+      // Update the sheet in place — do NOT reopen it (that would push a new history entry)
+      const sheetEl = document.querySelector('#modalRoot .sheet');
+      if (sheetEl) {
+        sheetEl.innerHTML = historySheetHtml(ex);
+        wireHistorySheet(ex);
+      }
       showToast('Sesión eliminada');
     };
   });
@@ -948,8 +992,11 @@ function renderWeightView() {
   const el = document.getElementById('weightView');
   sortBodyweight();
 
+  const backHtml = `<div class="back-link" id="backToRoutine">‹ Volver a la rutina</div>`;
+
   if (!bodyweight.length) {
-    el.innerHTML = '<div class="empty-state">Todavía no has registrado tu peso.<br>Usa el botón de abajo para añadir el primero.</div>';
+    el.innerHTML = backHtml + '<div class="empty-state">Todavía no has registrado tu peso.<br>Usa el botón de abajo para añadir el primero.</div>';
+    document.getElementById('backToRoutine').onclick = goBackToRoutine;
     return;
   }
 
@@ -978,7 +1025,7 @@ function renderWeightView() {
     `;
   }).join('');
 
-  el.innerHTML = `
+  el.innerHTML = backHtml + `
     <div class="current-weight-card">
       <div class="cw-value">${last.weight}kg</div>
       <div class="cw-date">${fmtDate(last.date)}</div>
@@ -991,6 +1038,8 @@ function renderWeightView() {
     <div class="weight-list-title">Historial completo</div>
     ${listHtml}
   `;
+
+  document.getElementById('backToRoutine').onclick = goBackToRoutine;
 
   el.querySelectorAll('[data-del-w]').forEach(btn => {
     btn.onclick = async () => {
@@ -1095,13 +1144,19 @@ function exportData() {
 }
 
 document.getElementById('viewToggleBtn').onclick = () => {
-  activeView = activeView === 'routine' ? 'weight' : 'routine';
-  render();
+  if (activeView === 'routine') {
+    activeView = 'weight';
+    history.pushState({ pplView: 'weight' }, '');
+    render();
+  } else {
+    history.back();
+  }
 };
 
 document.getElementById('exportBtn').onclick = exportData;
 
 (async function init() {
+  history.replaceState({ pplView: 'routine' }, '');
   await loadData();
   document.getElementById('loadingScreen').remove();
   render();

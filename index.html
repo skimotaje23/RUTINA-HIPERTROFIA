@@ -179,6 +179,25 @@ body {
 }
 .last-session .label { color: var(--gray-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
 
+.history-link {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--yellow);
+  opacity: 0.85;
+  cursor: pointer;
+}
+.history-link:active { opacity: 0.6; }
+
+.hist-row {
+  display:flex; justify-content:space-between; align-items:center;
+  background: var(--card); border:1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.hist-date {
+  font-family: var(--font-display); font-size: 12px; color: var(--yellow); margin-bottom: 3px;
+}
+.hist-sets { font-size: 12.5px; color: var(--white); }
+
 .suggestion {
   margin-top: 8px;
   font-size: 12.5px;
@@ -525,7 +544,8 @@ function renderExercises() {
     let lastHtml = '';
     if (session) {
       const setsStr = session.sets.map(s => `${s.reps}x${s.weight}kg (RIR${s.rir})`).join(' · ');
-      lastHtml = `<div class="last-session"><div class="label">Última vez · ${fmtDate(session.date)}</div>${setsStr}</div>`;
+      lastHtml = `<div class="last-session"><div class="label">Última vez · ${fmtDate(session.date)}</div>${setsStr}</div>
+      <div class="history-link" data-action="history">Ver historial completo (${(logs[ex.id] || []).length} sesiones) ›</div>`;
     }
 
     card.innerHTML = `
@@ -548,6 +568,8 @@ function renderExercises() {
     card.querySelector('[data-action="log"]').onclick = () => openLogSheet(ex);
     card.querySelector('[data-action="edit"]').onclick = () => openEditExerciseSheet(day, ex);
     card.querySelector('[data-action="delete"]').onclick = () => confirmDeleteExercise(day, ex);
+    const histLink = card.querySelector('[data-action="history"]');
+    if (histLink) histLink.onclick = () => openHistorySheet(ex);
 
     list.appendChild(card);
   });
@@ -567,7 +589,48 @@ function openOverlay(innerHtml) {
   });
 }
 
-function openLogSheet(ex) {
+function openHistorySheet(ex) {
+  renderHistorySheet(ex);
+}
+
+function renderHistorySheet(ex) {
+  const sessions = (logs[ex.id] || []).slice().reverse();
+  const rowsHtml = sessions.map((session, revIdx) => {
+    const realIdx = logs[ex.id].length - 1 - revIdx;
+    const setsStr = session.sets.map(s => `${s.reps}x${s.weight}kg (RIR${s.rir})`).join(' · ');
+    return `
+      <div class="hist-row">
+        <div>
+          <div class="hist-date">${fmtDate(session.date)}</div>
+          <div class="hist-sets">${setsStr}</div>
+        </div>
+        <div class="rm" data-del="${realIdx}">–</div>
+      </div>
+    `;
+  }).join('');
+
+  openOverlay(`
+    <div class="header-close"><div class="close-x" id="closeBtn">✕</div></div>
+    <h3>${ex.name}</h3>
+    <div class="sheet-sub">${sessions.length} sesión${sessions.length === 1 ? '' : 'es'} registrada${sessions.length === 1 ? '' : 's'}</div>
+    <div id="histContainer">${rowsHtml || '<div class="empty-state">Sin sesiones todavía.</div>'}</div>
+    <div class="sheet-actions">
+      <button class="btn-secondary" id="closeHist">Cerrar</button>
+    </div>
+  `);
+  document.getElementById('closeBtn').onclick = closeModal;
+  document.getElementById('closeHist').onclick = closeModal;
+  document.querySelectorAll('#histContainer .rm').forEach(btn => {
+    btn.onclick = async () => {
+      const idx = parseInt(btn.getAttribute('data-del'), 10);
+      logs[ex.id].splice(idx, 1);
+      await saveLogs();
+      render();
+      renderHistorySheet(ex);
+      showToast('Sesión eliminada');
+    };
+  });
+}
   const setCount = ex.sets;
   let setsHtml = '';
   for (let i = 0; i < setCount; i++) {

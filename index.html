@@ -378,14 +378,14 @@ function uid(prefix) {
 
 async function loadData() {
   try {
-    const r = await window.storage.get(STORAGE_ROUTINE_KEY, false);
-    routine = r ? JSON.parse(r.value) : JSON.parse(JSON.stringify(DEFAULT_ROUTINE));
+    const r = await storageGet(STORAGE_ROUTINE_KEY);
+    routine = r ? JSON.parse(r) : JSON.parse(JSON.stringify(DEFAULT_ROUTINE));
   } catch (e) {
     routine = JSON.parse(JSON.stringify(DEFAULT_ROUTINE));
   }
   try {
-    const l = await window.storage.get(STORAGE_LOGS_KEY, false);
-    logs = l ? JSON.parse(l.value) : {};
+    const l = await storageGet(STORAGE_LOGS_KEY);
+    logs = l ? JSON.parse(l) : {};
   } catch (e) {
     logs = {};
   }
@@ -393,13 +393,55 @@ async function loadData() {
 }
 
 async function saveRoutine() {
-  try { await window.storage.set(STORAGE_ROUTINE_KEY, JSON.stringify(routine), false); }
-  catch (e) { console.error('No se pudo guardar la rutina', e); }
+  await storageSet(STORAGE_ROUTINE_KEY, JSON.stringify(routine));
 }
 
 async function saveLogs() {
-  try { await window.storage.set(STORAGE_LOGS_KEY, JSON.stringify(logs), false); }
-  catch (e) { console.error('No se pudo guardar el historial', e); }
+  return await storageSet(STORAGE_LOGS_KEY, JSON.stringify(logs));
+}
+
+async function storageGet(key) {
+  if (window.storage && typeof window.storage.get === 'function') {
+    try {
+      const r = await window.storage.get(key, false);
+      return r ? r.value : null;
+    } catch (e) {
+      return storageGetLocal(key);
+    }
+  }
+  return storageGetLocal(key);
+}
+
+async function storageSet(key, value) {
+  let ok = false;
+  if (window.storage && typeof window.storage.set === 'function') {
+    try {
+      const r = await window.storage.set(key, value, false);
+      ok = !!r;
+    } catch (e) {
+      ok = false;
+    }
+  }
+  const localOk = storageSetLocal(key, value);
+  return ok || localOk;
+}
+
+function storageGetLocal(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+function storageSetLocal(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    console.error('No se pudo guardar en localStorage', e);
+    return false;
+  }
 }
 
 function getDay(id) { return routine.find(d => d.id === id); }
@@ -570,10 +612,14 @@ function openLogSheet(ex) {
     if (!logs[ex.id]) logs[ex.id] = [];
     logs[ex.id].push({ date: new Date().toISOString(), sets });
     if (logs[ex.id].length > 30) logs[ex.id] = logs[ex.id].slice(-30);
-    await saveLogs();
+    const saved = await saveLogs();
     closeModal();
     render();
-    showToast('Sesión guardada');
+    if (saved) {
+      showToast('Sesión guardada');
+    } else {
+      showToast('No se pudo guardar. Revisa que no estés en modo incógnito.', true);
+    }
   };
 }
 
@@ -710,9 +756,10 @@ function confirmDeleteExercise(day, ex) {
   };
 }
 
-function showToast(msg) {
+function showToast(msg, isError) {
   const t = document.createElement('div');
   t.className = 'toast';
+  if (isError) { t.style.background = '#e0554a'; t.style.color = '#fff'; }
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2200);

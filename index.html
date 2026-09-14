@@ -222,6 +222,12 @@ body {
 .ex-meta { font-size: 11.5px; color: var(--gray); margin-top: 4px; }
 .ex-meta b { color: var(--yellow); font-weight:600; }
 .ex-note { font-size: 11px; color: var(--gray-dim); font-style: italic; margin-top: 4px; }
+.pr-line {
+  font-size: 11.5px; color: var(--yellow); margin-top: 6px; font-family: var(--font-display);
+}
+.session-note {
+  font-size: 11.5px; color: var(--gray); font-style: italic; margin-top: 4px;
+}
 
 .icon-btn {
   width: 30px; height: 30px; border-radius: 9px;
@@ -378,6 +384,13 @@ body {
   background: transparent; color: var(--gray); font-size: 13px; margin: 4px 0 16px; cursor:pointer;
 }
 
+.fill-prev-btn {
+  width:100%; padding:9px; border-radius:10px; border:1px solid var(--yellow-dim);
+  background: var(--yellow-soft); color: var(--yellow); font-size: 12.5px; margin: 10px 0 14px;
+  cursor:pointer; text-align:center; font-family: var(--font-display);
+}
+.fill-prev-btn:active { opacity: 0.7; }
+
 .sheet-actions { display:flex; gap:10px; margin-top: 6px; }
 .btn-primary, .btn-secondary {
   flex:1; padding: 13px; border-radius: 12px; border:none; font-size: 14.5px;
@@ -433,6 +446,7 @@ body {
       </div>
       <div class="topbar-icons">
         <div class="icon-btn-lg" id="viewToggleBtn" title="Peso corporal">⚖</div>
+        <div class="icon-btn-lg" id="importBtn" title="Importar datos">⬆</div>
         <div class="icon-btn-lg" id="exportBtn" title="Exportar datos">⬇</div>
       </div>
     </div>
@@ -442,6 +456,7 @@ body {
   <div class="exercise-list" id="exerciseList"></div>
   <div class="weight-view" id="weightView" style="display:none;"></div>
 </div>
+<input type="file" id="importFileInput" accept="application/json" style="display:none;">
 
 <div class="fab">
   <div class="fab-inner" id="fabBtn">+ &nbsp; Añadir ejercicio a este día</div>
@@ -556,6 +571,21 @@ function lastSessionFor(exerciseId) {
   return arr[arr.length - 1];
 }
 
+function getBestSet(exerciseId, uptoSessionIdx) {
+  const arr = logs[exerciseId];
+  if (!arr || !arr.length) return null;
+  const limit = (uptoSessionIdx === undefined) ? arr.length : uptoSessionIdx;
+  let best = null;
+  for (let i = 0; i < limit; i++) {
+    arr[i].sets.forEach(s => {
+      if (!best || s.weight > best.weight || (s.weight === best.weight && s.reps > best.reps)) {
+        best = { weight: s.weight, reps: s.reps };
+      }
+    });
+  }
+  return best;
+}
+
 function fmtDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
@@ -655,15 +685,18 @@ function renderExercises() {
   day.exercises.forEach(ex => {
     const session = lastSessionFor(ex.id);
     const sug = suggestNext(ex, session);
+    const best = getBestSet(ex.id);
     const card = document.createElement('div');
     card.className = 'card';
 
     let lastHtml = '';
     if (session) {
       const setsStr = session.sets.map(s => `${s.reps}x${s.weight}kg (RIR${s.rir})`).join(' · ');
-      lastHtml = `<div class="last-session"><div class="label">Última vez · ${fmtDate(session.date)}</div>${setsStr}</div>
+      const noteHtml = session.note ? `<div class="session-note">"${session.note}"</div>` : '';
+      lastHtml = `<div class="last-session"><div class="label">Última vez · ${fmtDate(session.date)}</div>${setsStr}${noteHtml}</div>
       <div class="history-link" data-action="history">Ver historial completo (${(logs[ex.id] || []).length} sesiones) ›</div>`;
     }
+    const bestHtml = best ? `<div class="pr-line">🏆 Mejor marca: ${best.weight}kg x ${best.reps}</div>` : '';
 
     card.innerHTML = `
       <div class="card-top">
@@ -671,6 +704,7 @@ function renderExercises() {
           <div class="ex-name">${ex.name}</div>
           <div class="ex-meta">${ex.sets}x<b>${ex.repMin}-${ex.repMax}</b> reps &nbsp;·&nbsp; RIR <b>${ex.rir}</b> &nbsp;·&nbsp; Descanso ${ex.rest >= 60 ? Math.round(ex.rest/60*10)/10 + ' min' : ex.rest + ' s'}</div>
           ${ex.note ? `<div class="ex-note">${ex.note}</div>` : ''}
+          ${bestHtml}
         </div>
         <div class="card-actions">
           <div class="icon-btn" data-action="edit" title="Editar">✎</div>
@@ -742,11 +776,13 @@ function historySheetHtml(ex) {
   const rowsHtml = sessions.map((session, revIdx) => {
     const realIdx = logs[ex.id].length - 1 - revIdx;
     const setsStr = session.sets.map(s => `${s.reps}x${s.weight}kg (RIR${s.rir})`).join(' · ');
+    const noteHtml = session.note ? `<div class="session-note">"${session.note}"</div>` : '';
     return `
       <div class="hist-row">
         <div>
           <div class="hist-date">${fmtDate(session.date)}</div>
           <div class="hist-sets">${setsStr}</div>
+          ${noteHtml}
         </div>
         <div class="rm" data-del="${realIdx}">–</div>
       </div>
@@ -790,12 +826,21 @@ function openLogSheet(ex) {
   for (let i = 0; i < setCount; i++) {
     setsHtml += setRowHtml(i + 1);
   }
+  const prevSession = lastSessionFor(ex.id);
+  const fillBtnHtml = prevSession
+    ? `<div class="fill-prev-btn" id="fillPrevBtn">↺ Usar datos de la última sesión (${fmtDate(prevSession.date)})</div>`
+    : '';
   openOverlay(`
     <div class="header-close"><div class="close-x" id="closeBtn">✕</div></div>
     <h3>${ex.name}</h3>
     <div class="sheet-sub">${ex.sets}x${ex.repMin}-${ex.repMax} reps · RIR objetivo ${ex.rir}</div>
+    ${fillBtnHtml}
     <div id="setsContainer">${setsHtml}</div>
     <button class="add-set-btn" id="addSetBtn">+ Añadir serie</button>
+    <div class="field">
+      <label>Notas (opcional)</label>
+      <input id="log-note" type="text" placeholder="Ej. pesado hoy, molestia leve en hombro...">
+    </div>
     <div class="sheet-actions">
       <button class="btn-secondary" id="cancelLog">Cancelar</button>
       <button class="btn-primary" id="saveLog">Guardar sesión</button>
@@ -810,6 +855,21 @@ function openLogSheet(ex) {
     attachRemoveHandlers();
   };
   attachRemoveHandlers();
+
+  const fillBtn = document.getElementById('fillPrevBtn');
+  if (fillBtn) {
+    fillBtn.onclick = () => {
+      const rows = document.querySelectorAll('#setsContainer .set-row');
+      rows.forEach((row, i) => {
+        const prevSet = prevSession.sets[i];
+        if (!prevSet) return;
+        row.querySelector('.w-input').value = prevSet.weight;
+        row.querySelector('.r-input').value = prevSet.reps;
+        row.querySelector('.rir-input').value = prevSet.rir;
+      });
+      showToast('Datos de la última sesión cargados');
+    };
+  }
 
   document.getElementById('saveLog').onclick = async () => {
     const rows = document.querySelectorAll('#setsContainer .set-row');
@@ -826,14 +886,24 @@ function openLogSheet(ex) {
       alert('Rellena peso, reps y RIR en cada serie.');
       return;
     }
+    const note = document.getElementById('log-note').value.trim();
+    const prevBest = getBestSet(ex.id);
+    const newBest = sets.reduce((best, s) => {
+      if (!best || s.weight > best.weight || (s.weight === best.weight && s.reps > best.reps)) return { weight: s.weight, reps: s.reps };
+      return best;
+    }, null);
+    const isPR = newBest && (!prevBest || newBest.weight > prevBest.weight || (newBest.weight === prevBest.weight && newBest.reps > prevBest.reps));
+
     if (!logs[ex.id]) logs[ex.id] = [];
-    logs[ex.id].push({ date: new Date().toISOString(), sets });
+    const entry = { date: new Date().toISOString(), sets };
+    if (note) entry.note = note;
+    logs[ex.id].push(entry);
     if (logs[ex.id].length > 30) logs[ex.id] = logs[ex.id].slice(-30);
     const saved = await saveLogs();
     closeModal();
     render();
     if (saved) {
-      showToast('Sesión guardada');
+      showToast(isPR ? '🏆 ¡Nuevo récord en este ejercicio!' : 'Sesión guardada');
     } else {
       showToast('No se pudo guardar. Revisa que no estés en modo incógnito.', true);
     }
@@ -1143,6 +1213,60 @@ function exportData() {
   showToast('Archivo descargado');
 }
 
+// ---------- Import ----------
+
+function importData() {
+  document.getElementById('importFileInput').click();
+}
+
+function handleImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try {
+      data = JSON.parse(reader.result);
+    } catch (e) {
+      showToast('El archivo no es un JSON válido.', true);
+      return;
+    }
+    if (!data || !Array.isArray(data.routine)) {
+      showToast('Este archivo no tiene el formato esperado.', true);
+      return;
+    }
+    confirmImport(data);
+  };
+  reader.onerror = () => showToast('No se pudo leer el archivo.', true);
+  reader.readAsText(file);
+}
+
+function confirmImport(data) {
+  const numSessions = Object.values(data.logs || {}).reduce((acc, arr) => acc + arr.length, 0);
+  openOverlay(`
+    <div class="header-close"><div class="close-x" id="closeBtn">✕</div></div>
+    <h3>Importar datos</h3>
+    <div class="sheet-sub">Este archivo contiene ${data.routine.length} día${data.routine.length === 1 ? '' : 's'} de rutina, ${numSessions} sesión${numSessions === 1 ? '' : 'es'} registrada${numSessions === 1 ? '' : 's'} y ${(data.bodyweight || []).length} registro${(data.bodyweight || []).length === 1 ? '' : 's'} de peso.<br><br>Importar <b>sobrescribirá por completo</b> tu rutina y tu historial actual en este dispositivo. No se puede deshacer.</div>
+    <div class="sheet-actions">
+      <button class="btn-secondary" id="cancelImport">Cancelar</button>
+      <button class="btn-danger" id="confirmImportBtn">Sobrescribir e importar</button>
+    </div>
+  `);
+  document.getElementById('closeBtn').onclick = closeModal;
+  document.getElementById('cancelImport').onclick = closeModal;
+  document.getElementById('confirmImportBtn').onclick = async () => {
+    routine = data.routine;
+    logs = data.logs || {};
+    bodyweight = data.bodyweight || [];
+    await saveRoutine();
+    await saveLogs();
+    await saveBodyweight();
+    activeDayId = routine[0] ? routine[0].id : 'd1';
+    activeView = 'routine';
+    closeModal();
+    render();
+    showToast('Datos importados correctamente');
+  };
+}
+
 document.getElementById('viewToggleBtn').onclick = () => {
   if (activeView === 'routine') {
     activeView = 'weight';
@@ -1154,6 +1278,12 @@ document.getElementById('viewToggleBtn').onclick = () => {
 };
 
 document.getElementById('exportBtn').onclick = exportData;
+document.getElementById('importBtn').onclick = importData;
+document.getElementById('importFileInput').onchange = (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) handleImportFile(file);
+  e.target.value = '';
+};
 
 (async function init() {
   history.replaceState({ pplView: 'routine' }, '');
